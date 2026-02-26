@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PATROCLUS - Noir System Monitor for Linux
+Noir System Monitor for Linux
 An AI-narrated terminal dashboard. Dark alleys, hot silicon, cold facts.
 """
 
@@ -21,7 +21,8 @@ from datetime import datetime
 # ── CONFIG ──────────────────────────────────────────────────
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "lfm2.5-thinking"
-AI_COOLDOWN = 10  # seconds to wait after query completes before next one
+AI_COOLDOWN = 10  # target seconds between query starts (adaptive post-query wait)
+AI_MIN_COOLDOWN = 3  # minimum seconds to wait after each query completes
 STAT_REFRESH = 1  # seconds between stat updates
 CPU_HISTORY = 40  # bars in the sparkline
 # ────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ state = {
     "ai_updated": "",
     "ai_prompt": "",
     "ai_next_at": 0.0,  # epoch time when next query will fire
+    "ai_cooldown_window": AI_COOLDOWN,  # current post-query wait window (seconds)
     "cpu_history": deque([0.0] * CPU_HISTORY, maxlen=CPU_HISTORY),
     "gen_peak_cpu": 0.0,  # peak CPU % during current/last Ollama generation
     "gen_peak_temp": 0.0,  # peak temp °C during current/last Ollama generation
@@ -383,6 +385,8 @@ def ai_loop():
 
     time.sleep(3)  # let stats populate first
     while state["running"]:
+        query_started_at = time.time()
+
         # ── Snapshot peaks from last generation, reset for this one ──
         last_peak_cpu = state["gen_peak_cpu"]
         last_peak_temp = state["gen_peak_temp"]
@@ -436,8 +440,11 @@ def ai_loop():
         finally:
             state["ai_thinking"] = False
 
-        # ── Cooldown phase: 10s after completion, interruptible ─
-        state["ai_next_at"] = time.time() + AI_COOLDOWN
+        # ── Adaptive cooldown with enforced minimum post-query pause ─
+        query_elapsed = max(0.0, time.time() - query_started_at)
+        cooldown = max(AI_MIN_COOLDOWN, AI_COOLDOWN - query_elapsed)
+        state["ai_cooldown_window"] = cooldown
+        state["ai_next_at"] = time.time() + cooldown
         while state["running"] and time.time() < state["ai_next_at"]:
             time.sleep(0.25)
 
@@ -670,8 +677,7 @@ def draw(stdscr, color):
     if ai_w > 15 and H > 12:
         ai_row = vitals_start
         try:
-            stdscr.addstr(ai_row, ai_x, "  AI DISPATCH", C["HEAD"])
-            stdscr.addstr(ai_row, ai_x + 14, f"  ({OLLAMA_MODEL})", C["DIM"])
+            stdscr.addstr(ai_row, ai_x, "  MONOLOGUE", C["HEAD"])
         except curses.error:
             pass
         ai_row += 1
@@ -690,7 +696,8 @@ def draw(stdscr, color):
         elif state["ai_next_at"] > 0:
             secs_left = max(0, state["ai_next_at"] - time.time())
             bar_w2 = 10
-            filled2 = int((1 - secs_left / AI_COOLDOWN) * bar_w2)
+            window = max(state.get("ai_cooldown_window", AI_COOLDOWN), 0.001)
+            filled2 = int((1 - secs_left / window) * bar_w2)
             bar2 = "▓" * filled2 + "░" * (bar_w2 - filled2)
             status = (
                 f"↺ [{bar2}] next in {secs_left:.0f}s  (last: {state['ai_updated']})"
@@ -745,9 +752,7 @@ def draw(stdscr, color):
                 pass
 
     # ── FOOTER ──
-    footer = (
-        "  [Q] Quit  |  AI: continuous, 10s cooldown between dispatches  |  NOIR v1.0  "
-    )
+    footer = f"  [Q] Quit  |  AI: adaptive {AI_COOLDOWN:g}s target, {AI_MIN_COOLDOWN:g}s minimum wait  |  NOIR v1.0  "
     if H - 1 > 0:
         try:
             stdscr.addstr(H - 2, 0, "─" * (W - 1), C["BORDER"])
@@ -805,9 +810,20 @@ if __name__ == "__main__":
         default=OLLAMA_MODEL,
         help=f"Ollama model to query (default: {OLLAMA_MODEL})",
     )
+    parser.add_argument(
+        "--cooldown",
+        type=float,
+        default=AI_COOLDOWN,
+        help=(
+            f"Target seconds between AI query starts (default: {AI_COOLDOWN:g}). "
+            f"A minimum {AI_MIN_COOLDOWN:g}s post-query wait is always enforced."
+        ),
+    )
     args = parser.parse_args()
 
     OLLAMA_MODEL = args.model
+    AI_COOLDOWN = max(0.0, args.cooldown)
+    state["ai_cooldown_window"] = AI_COOLDOWN
 
     try:
         ensure_ollama_model_available(OLLAMA_MODEL)
