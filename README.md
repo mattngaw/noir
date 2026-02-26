@@ -1,5 +1,7 @@
 # NOIR
 
+<img src="noir.png" alt="NOIR terminal screenshot" width="760" />
+
 > "The rain hammered against the terminal like regrets on a guilty conscience."
 
 A noir-flavored AI system monitor for Linux machines.
@@ -9,7 +11,8 @@ A noir-flavored AI system monitor for Linux machines.
 - Real-time system vitals: CPU, Memory, Temperature, Disk, Load, Uptime
 - Live CPU sparkline history
 - AI-generated noir monologues from a local Ollama model (default: `lfm2.5-thinking`),
-  continuously cycling with a 10s cooldown between dispatches
+  continuously cycling with an adaptive target cadence (default: 10s between query starts)
+  with a hard minimum 3s wait after each completed query
 - Monologues accumulate in a scrolling history panel -- older ones scroll off the top
 - Each monologue shows an appended end-to-end throughput tag (tok/s), dimmed so
   it stays informative without overpowering the text
@@ -25,6 +28,13 @@ A noir-flavored AI system monitor for Linux machines.
 Optional model override:
 
     python3 noir.py --model lfm2.5-thinking:latest
+
+Optional cadence override:
+
+    python3 noir.py --cooldown 10
+
+`--cooldown` sets the target cadence, but NOIR always enforces a minimum 3s
+post-query cooldown.
 
 Press Q or Escape to quit.
 Requires: Python 3.8+, Linux (`/proc` + `os.getloadavg()`), Ollama running, and a
